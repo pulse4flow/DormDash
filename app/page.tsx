@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Image from "next/image";
 import { SiteHeader } from "@/components/site-header";
 import { AnnouncementCard } from "@/components/announcement-card";
 import { BookmarksWidget } from "@/components/dashboard/bookmarks-widget";
@@ -26,10 +27,22 @@ export default async function Home() {
       <SiteHeader />
       <main>
         <section className="hero dash-hero">
-          <p className="eyebrow">Student Utility Dashboard</p>
-          <h1>Good evening — everything you need for dorm life.</h1>
-          <p>Announcements, tasks, maintenance requests and dorm info — no account needed.</p>
-          <DashboardSearch />
+          <div className="hero-photo">
+            <Image
+              src="/images/dorm-campus.webp"
+              alt="Dormitory buildings and the courtyard on campus"
+              fill
+              priority
+              sizes="(max-width: 900px) 100vw, 590px"
+              className="hero-photo-image"
+            />
+          </div>
+          <div className="hero-copy">
+            <p className="eyebrow">Student Utility Dashboard</p>
+            <h1>Good evening — everything you need for dorm life.</h1>
+            <p>Announcements, tasks, maintenance requests and dorm info — no account needed.</p>
+            <DashboardSearch />
+          </div>
         </section>
         <div className="dashboard">
           <section>

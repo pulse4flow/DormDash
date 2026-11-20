@@ -1,6 +1,12 @@
 "use client";
 import { FormEvent, useEffect, useState } from "react";
+import { upload as uploadBlob } from "@vercel/blob/client";
 import { useRouter } from "next/navigation";
+import {
+  allowedContentTypes,
+  type UploadKind,
+  UPLOAD_LIMITS,
+} from "@/lib/uploads";
 
 type Option = { id: string; name: string };
 type Input = {
@@ -13,6 +19,17 @@ type Input = {
 const blank: Input = { title: "", summary: "", content: "", status: "DRAFT", priority: "NORMAL", tagIds: [], attachmentIds: [] };
 const datetime = (value?: string | null) => value ? new Date(value).toISOString().slice(0, 16) : "";
 
+async function responseError(response: Response) {
+  const text = await response.text();
+  try {
+    const data = JSON.parse(text) as { error?: unknown };
+    if (typeof data.error === "string") return data.error;
+  } catch {
+    // The Blob service can return plain text for infrastructure errors.
+  }
+  return text || `Upload failed (${response.status}).`;
+}
+
 export function AnnouncementEditor({ initial }: { initial?: Input }) {
   const router = useRouter();
   const [value, setValue] = useState<Input>(initial ?? blank);
@@ -20,6 +37,8 @@ export function AnnouncementEditor({ initial }: { initial?: Input }) {
   const [tags, setTags] = useState<Option[]>([]);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
 
   useEffect(() => {
     Promise.all([
@@ -31,13 +50,62 @@ export function AnnouncementEditor({ initial }: { initial?: Input }) {
   const update = (key: keyof Input, val: string | string[]) =>
     setValue((current) => ({ ...current, [key]: val }));
 
-  async function upload(file: File, kind: "image" | "attachment") {
-    const form = new FormData();
-    form.set("file", file);
-    form.set("kind", kind);
-    const response = await fetch("/api/uploads", { method: "POST", body: form });
-    if (!response.ok) throw new Error((await response.json()).error);
-    return response.json() as Promise<{ id?: string; url: string }>;
+  async function upload(
+    file: File,
+    kind: UploadKind,
+  ): Promise<{ id?: string; url: string }> {
+    if (
+      !allowedContentTypes(kind).includes(file.type as never) ||
+      file.size === 0 ||
+      file.size > UPLOAD_LIMITS[kind]
+    ) {
+      const maxMb = UPLOAD_LIMITS[kind] / 1024 / 1024;
+      throw new Error(`Unsupported file type or size. Maximum: ${maxMb} MB.`);
+    }
+
+    setError("");
+    setUploading(true);
+    setUploadProgress(0);
+
+    try {
+      const safeName = file.name
+        .normalize("NFKD")
+        .replace(/[^a-zA-Z0-9._-]+/g, "-")
+        .replace(/-+/g, "-")
+        .slice(-120);
+
+      const blob = await uploadBlob(
+        `uploads/${Date.now()}-${safeName || "file"}`,
+        file,
+        {
+          access: "public",
+          handleUploadUrl: "/api/uploads",
+          clientPayload: JSON.stringify({ kind }),
+          contentType: file.type,
+          multipart: file.size > 5 * 1024 * 1024,
+          onUploadProgress: ({ percentage }) =>
+            setUploadProgress(Math.round(percentage)),
+        },
+      );
+
+      if (kind === "image") return { url: blob.url };
+
+      const response = await fetch("/api/uploads/complete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          url: blob.url,
+          fileName: file.name.slice(0, 180),
+          mimeType: file.type,
+          size: file.size,
+        }),
+      });
+      if (!response.ok) throw new Error(await responseError(response));
+      return response.json() as Promise<{ id: string; url: string }>;
+    } finally {
+      setUploading(false);
+      setUploadProgress(0);
+    }
   }
 
   async function submit(event: FormEvent) {
@@ -142,7 +210,7 @@ export function AnnouncementEditor({ initial }: { initial?: Input }) {
       <fieldset>
         <legend>Media</legend>
         <label>Image
-          <input type="file" accept="image/jpeg,image/png,image/webp" onChange={async (e) => {
+          <input disabled={uploading} type="file" accept="image/jpeg,image/png,image/webp" onChange={async (e) => {
             const file = e.target.files?.[0];
             if (!file) return;
             try { update("imageUrl", (await upload(file, "image")).url); }
@@ -151,7 +219,7 @@ export function AnnouncementEditor({ initial }: { initial?: Input }) {
         </label>
         {value.imageUrl && <img className="image-preview" src={value.imageUrl} alt="Selected announcement" />}
         <label>Attachment
-          <input type="file" accept=".pdf,.docx,.xlsx,.zip,image/jpeg,image/png,image/webp" onChange={async (e) => {
+          <input disabled={uploading} type="file" accept=".pdf,.docx,.xlsx,.zip,image/jpeg,image/png,image/webp" onChange={async (e) => {
             const file = e.target.files?.[0];
             if (!file) return;
             try {
@@ -160,12 +228,19 @@ export function AnnouncementEditor({ initial }: { initial?: Input }) {
             } catch (cause) { setError(cause instanceof Error ? cause.message : "Upload failed."); }
           }} />
         </label>
+        {uploading ? <p>Uploading… {uploadProgress}%</p> : null}
         {value.attachmentIds?.length ? <p>{value.attachmentIds.length} attachment(s) ready to save.</p> : null}
       </fieldset>
 
       {error && <p className="form-error">{error}</p>}
-      <button className="button" disabled={saving}>
-        {saving ? "Saving\u2026" : value.status === "DRAFT" ? "Save draft" : "Save announcement"}
+      <button className="button" disabled={saving || uploading}>
+        {uploading
+          ? `Uploading… ${uploadProgress}%`
+          : saving
+            ? "Saving…"
+            : value.status === "DRAFT"
+              ? "Save draft"
+              : "Save announcement"}
       </button>
     </form>
   );

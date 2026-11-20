@@ -5,3 +5,5 @@ public/uploads/*
 !public/uploads/.gitkeep
 prisma/dev.db
 tsconfig.tsbuildinfo
+.vercel
+.env*
