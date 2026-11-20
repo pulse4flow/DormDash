@@ -88,3 +88,125 @@ model RepairRequest {
   @@index([status])
   @@index([category])
 }
+
+model Property {
+  id           String        @id @default(cuid())
+  name         String
+  timezone     String        @default("Asia/Bangkok")
+  rooms        Room[]
+  staff        OpsStaff[]
+  guests       Guest[]
+  reservations Reservation[]
+  stays        Stay[]
+  workOrders   WorkOrder[]
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+}
+
+model OpsStaff {
+  id           String      @id @default(cuid())
+  propertyId   String
+  property     Property    @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  email        String      @unique
+  name         String
+  passwordHash String
+  role         String      @default("STAFF")
+  active       Boolean     @default(true)
+  assignedWork WorkOrder[] @relation("WorkAssignee")
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  @@index([propertyId])
+}
+
+model Room {
+  id           String        @id @default(cuid())
+  propertyId   String
+  property     Property      @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  number       String
+  type         String        @default("Standard")
+  capacity     Int           @default(2)
+  clean        Boolean       @default(true)
+  outOfService Boolean       @default(false)
+  active       Boolean       @default(true)
+  reservations Reservation[]
+  stays        Stay[]
+  workOrders   WorkOrder[]
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  @@unique([propertyId, number])
+  @@index([propertyId, outOfService])
+}
+
+model Guest {
+  id           String        @id @default(cuid())
+  propertyId   String
+  property     Property      @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  name         String
+  contact      String        @default("")
+  phone        String?
+  email        String?
+  reservations Reservation[]
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  @@index([propertyId])
+}
+
+model Reservation {
+  id           String    @id @default(cuid())
+  propertyId   String
+  property     Property  @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  roomId       String
+  room         Room      @relation(fields: [roomId], references: [id])
+  guestId      String
+  guest        Guest     @relation(fields: [guestId], references: [id])
+  checkInDate  DateTime  @db.Date
+  checkOutDate DateTime  @db.Date
+  partySize    Int       @default(1)
+  notes        String    @default("")
+  status       String    @default("CONFIRMED")
+  stay         Stay?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([propertyId, checkInDate, checkOutDate])
+  @@index([roomId, status, checkInDate, checkOutDate])
+}
+
+model Stay {
+  id            String      @id @default(cuid())
+  propertyId    String
+  property      Property    @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  reservationId String      @unique
+  reservation   Reservation @relation(fields: [reservationId], references: [id])
+  roomId        String
+  room          Room        @relation(fields: [roomId], references: [id])
+  checkedInAt   DateTime    @default(now())
+  checkedOutAt  DateTime?
+  createdAt     DateTime    @default(now())
+
+  @@index([propertyId, checkedOutAt])
+}
+
+model WorkOrder {
+  id          String    @id @default(cuid())
+  propertyId  String
+  property    Property  @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  roomId      String
+  room        Room      @relation(fields: [roomId], references: [id])
+  type        String
+  status      String    @default("OPEN")
+  title       String
+  description String?
+  blocksRoom  Boolean   @default(false)
+  assigneeId  String?
+  assignee    OpsStaff? @relation("WorkAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  completedAt DateTime?
+
+  @@index([propertyId, status, type])
+  @@index([roomId, status])
+}

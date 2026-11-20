@@ -1,8 +1,39 @@
 # DormDash
 
+## Property operations MVP
+
+Open **`/operations`** for the new Thai-language workspace for a small property. It covers rooms, manually entered reservations, check-in/check-out, housekeeping, repairs, staff access, and a daily overview. The original resident demo remains available at `/`.
+
+### Set up the MVP
+
+1. Install dependencies with `npm ci`.
+2. Copy `.env.example` to `.env`, set `DATABASE_URL` to your PostgreSQL database, and replace `AUTH_SECRET` and `ADMIN_REGISTRATION_KEY` with random values. Existing shell variables or `.env.local` may override these values.
+3. Run `npm run prisma:generate` and `npx prisma migrate deploy` against the intended database. Back up any existing data before applying migrations.
+4. Run `npm run dev`, open `/operations`, and choose the initial setup form. Enter the registration key, property name, timezone, and the first manager account. Setup is available only before the first property exists.
+5. Add rooms and staff, then enter a reservation. No legacy demo seeding is needed for operations.
+
+Managers can change property/room settings and create accounts. Staff can manage reservations and work orders and can access guest contact details for front-desk work. Operations accounts use a separate session from the original demo's admin accounts.
+
+### First-version rules
+
+- One property per account, with two roles: manager and front-desk staff.
+- Reservations assign one specific room and use local calendar dates with an exclusive departure date. Departing and arriving guests may therefore share the same booking boundary date.
+- A room must be clean, operational, and unoccupied before check-in; unfinished work that blocks the room also prevents check-in.
+- Check-out creates a housekeeping task and makes the room dirty. Completing the necessary housekeeping work makes it ready for the next guest.
+- Reservation changes and state transitions are checked on the server, including concurrent attempts to reserve a room.
+- Online booking, external booking channels, payments, invoicing, monthly leases, and multi-property switching are outside this release.
+
+### Checks
+
+`npm run lint`, `npm run typecheck`, and `npm run build` check the application. `npm run test:ops` runs the operations integration suite against a running local application and a separate local PostgreSQL test database; see [tests/README.md](tests/README.md). Never point integration tests at a live property database.
+
+The product scope is documented in [docs/simple-resident-mvp-plan.md](docs/simple-resident-mvp-plan.md), with team responsibilities in [docs/team-readiness.md](docs/team-readiness.md).
+
+## Original resident demo
+
 A lightweight, demo-ready app for university **dorm life** — announcements, maintenance requests, dorm info, and a personal (device-local) task/bookmark tracker. No student accounts needed; only the admin area is protected.
 
-Built on Next.js 15 (App Router) + TypeScript + Prisma + SQLite. Announcements, repairs, categories, tags, and admins live in SQLite; tasks, bookmarks, and read-state are stored per-browser in `localStorage`.
+Built on Next.js 15 (App Router) + TypeScript + Prisma + PostgreSQL. Announcements, repairs, categories, tags, and admins live in PostgreSQL; tasks, bookmarks, and read-state are stored per-browser in `localStorage`.
 
 ## Quick start
 
@@ -17,7 +48,7 @@ npm run dev                   # http://localhost:3000
 
 | Variable | Purpose |
 | --- | --- |
-| `DATABASE_URL` | SQLite path, e.g. `file:./dev.db` |
+| `DATABASE_URL` | PostgreSQL connection URL, e.g. `postgresql://user:password@localhost:5432/dormdash` |
 | `AUTH_SECRET` | ≥ 32 chars — signs the admin JWT session cookie |
 | `ADMIN_REGISTRATION_KEY` | Required to create an admin account at `/admin/register` |
 
@@ -75,4 +106,4 @@ Sign in at `/admin/login`.
 
 - Admin auth: cookie-based JWT (`dormdash_admin`), bcrypt password hashes, 8-hour sessions.
 - Status visibility: only `PUBLISHED`, published-at, and not-expired announcements are shown publicly.
-- This is the `demo-v2` branch — a fresh, self-contained demo rework of the earlier demo (no migration history from demo-v1).
+- The `codex/simple-resident-mvp` branch adds property operations alongside the original resident demo. PostgreSQL migrations are stored in `prisma/migrations`.

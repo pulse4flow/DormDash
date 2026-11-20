@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { ThemeToggle } from "@/components/theme-toggle";
 
 const links = [
+  ["/operations", "จัดการที่พัก"],
   ["/", "Home"],
   ["/announcements", "Announcements"],
   ["/search", "Search"],

@@ -7,7 +7,6 @@ import { Countdown } from "@/components/countdown";
 import { DashboardSearch } from "@/components/dashboard/search-bar";
 import { MyTasksWidget } from "@/components/dashboard/my-tasks-widget";
 import { UtilityGrid } from "@/components/dashboard/utility-grid";
-import { DashboardSummary } from "@/components/dashboard/summary-strip";
 import { getPublicAnnouncements } from "@/lib/announcements";
 
 export const dynamic = "force-dynamic";
@@ -26,6 +25,9 @@ export default async function Home() {
     <>
       <SiteHeader />
       <main>
+        <div className="dashboard" style={{ paddingBottom: 0 }}>
+          <Link href="/operations" className="button">เปิดระบบจัดการที่พัก →</Link>
+        </div>
         <section className="hero dash-hero">
           <div className="hero-photo">
             <Image

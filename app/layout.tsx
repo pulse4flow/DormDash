@@ -4,7 +4,7 @@ import { PageTransition } from "@/components/page-transition";
 
 export const metadata: Metadata = {
   title: "DormDash",
-  description: "Dorm announcements, maintenance, tasks and essential information in one place.",
+  description: "Room reservations, arrivals, departures and team tasks for small properties.",
 };
 
 const themeScript = `
