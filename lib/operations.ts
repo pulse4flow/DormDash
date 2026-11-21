@@ -31,7 +31,9 @@ const propertyToday = (timezone: string) => {
   const part = (type: string) => parts.find(item => item.type === type)?.value ?? "";
   return `${part("year")}-${part("month")}-${part("day")}`;
 };
-const staffPublic = (s: { id: string; name: string; email: string; role: string }): OperationsStaff => ({ id: s.id, name: s.name, email: s.email, role: s.role as OperationsStaff["role"] });
+const staffPublic = (s: { id: string; name: string; email: string; role: string; active: boolean }): OperationsStaff => ({
+  id: s.id, name: s.name, email: s.email, role: s.role as OperationsStaff["role"], active: s.active,
+});
 
 const str = z.string();
 const id = str.min(1);
@@ -48,16 +50,20 @@ export const operationsActionSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("updateWorkOrder"), id, status: z.enum(["OPEN", "IN_PROGRESS", "DONE"]), assigneeId: id.nullable() }),
   z.object({ action: z.literal("updateProperty"), name: str }),
   z.object({ action: z.literal("createStaff"), name: str, email: str, password: str, role: z.enum(["MANAGER", "STAFF"]) }),
+  z.object({ action: z.literal("deactivateStaff"), id }),
 ]);
 
-export async function operationsSnapshot(user: { id: string; propertyId: string; name: string; email: string; role: string }): Promise<OperationsSnapshot> {
+export async function operationsSnapshot(user: { id: string; propertyId: string; name: string; email: string; role: string; active: boolean }): Promise<OperationsSnapshot> {
   const propertyId = user.propertyId;
   const [property, rooms, reservations, workOrders, staff] = await Promise.all([
     prisma.property.findUnique({ where: { id: propertyId } }),
     prisma.room.findMany({ where: { propertyId, active: true }, orderBy: { number: "asc" } }),
     prisma.reservation.findMany({ where: { propertyId }, include: { guest: true, stay: true }, orderBy: { checkInDate: "asc" } }),
     prisma.workOrder.findMany({ where: { propertyId }, orderBy: { createdAt: "desc" } }),
-    prisma.opsStaff.findMany({ where: { propertyId, active: true }, orderBy: { name: "asc" } }),
+    prisma.opsStaff.findMany({
+      where: { propertyId, ...(user.role === "MANAGER" ? {} : { active: true }) },
+      orderBy: [{ active: "desc" }, { name: "asc" }],
+    }),
   ]);
   if (!property) fail("ไม่สามารถโหลดข้อมูลที่พักได้", 503);
   const currentDate = propertyToday(property.timezone);
@@ -102,12 +108,17 @@ async function reservationFields(tx: Prisma.TransactionClient, propertyId: strin
   return { roomId: room.id, checkInDate, checkOutDate, partySize, notes: optional(action.notes), guestName: value(action.guestName, "ชื่อผู้เข้าพัก"), guestContact: optional(action.guestContact, 254) };
 }
 
-export async function applyOperationsAction(user: { id: string; propertyId: string; role: string }, action: OperationsAction) {
+export async function applyOperationsAction(user: { id: string; propertyId: string }, action: OperationsAction) {
   // Every write for one property enters the same queue. This keeps readiness,
   // reservations, and work order transitions coherent across concurrent requests.
   return prisma.$transaction(async tx => {
     await tx.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(hashtext(${user.propertyId}))`;
-    return applyOperationsActionLocked(tx, user, action);
+    const actor = await tx.opsStaff.findFirst({
+      where: { id: user.id, propertyId: user.propertyId, active: true },
+      select: { id: true, propertyId: true, role: true },
+    });
+    if (!actor) fail("กรุณาเข้าสู่ระบบ", 401);
+    return applyOperationsActionLocked(tx, actor, action);
   }, { timeout: 30000 });
 }
 
@@ -218,6 +229,23 @@ async function applyOperationsActionLocked(tx: Prisma.TransactionClient, user: {
       const password = action.password;
       if (typeof password !== "string" || password.length < 10 || new TextEncoder().encode(password).length > 72) fail("รหัสผ่านต้องมีอย่างน้อย 10 ตัวอักษร และมีขนาดไม่เกิน 72 ไบต์");
       await tx.opsStaff.create({ data: { propertyId, name: value(action.name, "ชื่อพนักงาน"), email: email(action.email), passwordHash: await opsHash(password), role: action.role } }); return;
+    }
+    case "deactivateStaff": {
+      requireManager(user.role);
+      const staff = await tx.opsStaff.findFirst({
+        where: { id: action.id, propertyId },
+        select: { id: true, role: true, active: true },
+      });
+      if (!staff) fail("ไม่พบพนักงานที่เลือก", 404);
+      if (staff.role !== "STAFF") fail("ปิดใช้งานได้เฉพาะบัญชีพนักงาน", 409);
+      if (!staff.active) return;
+
+      await tx.opsStaff.update({ where: { id: staff.id }, data: { active: false } });
+      await tx.workOrder.updateMany({
+        where: { propertyId, assigneeId: staff.id, status: { in: ["OPEN", "IN_PROGRESS"] } },
+        data: { assigneeId: null },
+      });
+      return;
     }
     default: fail("คำขอไม่ถูกต้อง");
   }

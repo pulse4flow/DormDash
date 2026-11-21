@@ -134,6 +134,7 @@ test("operations HTTP journey, isolation, authorization, and concurrency", { tim
       }, staffCookie);
       assert.notEqual(foreignBooking.response.status, 200);
       const foreignStaff = await prisma.opsStaff.findUniqueOrThrow({ where: { email: `${unique}-foreign@example.test` } });
+      await action({ action: "deactivateStaff", id: foreignStaff.id }, managerCookie, 404);
       const foreignAssignment = await request("/api/operations", "POST", {
         action: "createWorkOrder", roomId: ownRoom.id,
         type: "REPAIR", title: "Foreign assignee", assigneeId: foreignStaff.id, blocksRoom: false,
@@ -200,13 +201,22 @@ test("operations HTTP journey, isolation, authorization, and concurrency", { tim
     });
 
     await t.test("check-in, check-out, housekeeping, and blocking repair", async () => {
-      await action(reservation(day(0), day(1), "Current Guest"), staffCookie);
+      // Model a guest who checked in on an earlier day and still occupies the room.
+      await action(reservation(day(-2), day(-1), "Overdue Guest"), staffCookie);
       let current = await snapshot(managerCookie);
-      const stay = current.reservations.find((item) => item.guestName === "Current Guest");
+      const stay = current.reservations.find((item) => item.guestName === "Overdue Guest");
       assert.ok(stay);
-      await action({ action: "checkIn", id: stay.id }, staffCookie);
-      current = await snapshot(managerCookie);
-      assert.equal(current.reservations.find((item) => item.id === stay.id)?.status, "CHECKED_IN");
+      await prisma.reservation.update({
+        where: { id: stay.id },
+        data: {
+          status: "CHECKED_IN",
+          stay: { create: { propertyId: current.property.id, roomId: room.id, checkedInAt: new Date(`${day(-2)}T12:00:00Z`) } },
+        },
+      });
+      await action(reservation(day(0), day(1), "Current Guest"), staffCookie);
+      const arrival = (await snapshot(managerCookie)).reservations.find((item) => item.guestName === "Current Guest");
+      assert.ok(arrival);
+      await action({ action: "checkIn", id: arrival.id }, staffCookie, 409);
       await action({ action: "checkOut", id: stay.id }, staffCookie);
       current = await snapshot(managerCookie);
       assert.equal(current.reservations.find((item) => item.id === stay.id)?.status, "CHECKED_OUT");
@@ -216,9 +226,12 @@ test("operations HTTP journey, isolation, authorization, and concurrency", { tim
       const housekeepingCount = current.workOrders.filter((item) => item.roomId === room.id && item.type === "HOUSEKEEPING").length;
       await action({ action: "checkOut", id: stay.id }, staffCookie, 409);
       assert.equal((await snapshot(managerCookie)).workOrders.filter((item) => item.roomId === room.id && item.type === "HOUSEKEEPING").length, housekeepingCount);
+      await action({ action: "checkIn", id: arrival.id }, staffCookie, 409);
       await action({ action: "updateWorkOrder", id: housekeeping.id, status: "DONE", assigneeId: null }, staffCookie);
       current = await snapshot(managerCookie);
       assert.equal(current.rooms.find((item) => item.id === room.id)?.clean, true);
+      await action({ action: "checkIn", id: arrival.id }, staffCookie);
+      assert.equal((await snapshot(managerCookie)).reservations.find((item) => item.id === arrival.id)?.status, "CHECKED_IN");
       await action({ action: "createWorkOrder", roomId: room.id, type: "REPAIR", title: "Blocked fixture", assigneeId: null, blocksRoom: true }, staffCookie);
       current = await snapshot(managerCookie);
       const repair = current.workOrders.find((item) => item.roomId === room.id && item.type === "REPAIR" && item.status !== "DONE");
@@ -229,6 +242,31 @@ test("operations HTTP journey, isolation, authorization, and concurrency", { tim
       await action({ action: "updateWorkOrder", id: repair.id, status: "DONE", assigneeId: null }, staffCookie);
       current = await snapshot(managerCookie);
       assert.equal(current.rooms.find((item) => item.id === room.id)?.outOfService, true);
+    });
+
+    await t.test("manager revokes staff access and releases unfinished assignments", async () => {
+      const before = await snapshot(managerCookie);
+      const staff = before.staff.find((item) => item.email === staffEmail);
+      assert.ok(staff?.active);
+      const deactivate = { action: "deactivateStaff", id: staff.id };
+      await action(deactivate, staffCookie, 403);
+      await action({ action: "deactivateStaff", id: before.user.id }, managerCookie, 409);
+      await action({ action: "createWorkOrder", roomId: room.id, type: "REPAIR", title: "Open assignment", assigneeId: staff.id, blocksRoom: false }, managerCookie);
+      await action({ action: "createWorkOrder", roomId: room.id, type: "REPAIR", title: "Completed assignment", assigneeId: staff.id, blocksRoom: false }, managerCookie);
+      const completed = (await snapshot(managerCookie)).workOrders.find((work) => work.title === "Completed assignment");
+      assert.ok(completed);
+      await action({ action: "updateWorkOrder", id: completed.id, status: "DONE", assigneeId: staff.id }, managerCookie);
+
+      await action(deactivate, managerCookie);
+      await action(deactivate, managerCookie);
+      assert.equal((await request("/api/operations", "GET", undefined, staffCookie)).response.status, 401);
+      assert.equal((await request("/api/operations/session", "POST", { email: staffEmail, password })).response.status, 401);
+      await action({ action: "createWorkOrder", roomId: room.id, type: "REPAIR", title: "Revoked write", assigneeId: null, blocksRoom: false }, staffCookie, 401);
+      await action({ action: "createWorkOrder", roomId: room.id, type: "REPAIR", title: "Inactive assignment", assigneeId: staff.id, blocksRoom: false }, managerCookie, 404);
+      const after = await snapshot(managerCookie);
+      assert.equal(after.staff.find((item) => item.id === staff.id)?.active, false);
+      assert.equal(after.workOrders.find((work) => work.title === "Open assignment")?.assigneeId, null);
+      assert.equal(after.workOrders.find((work) => work.id === completed.id)?.assigneeId, staff.id);
     });
   } finally {
     await prisma.$disconnect();

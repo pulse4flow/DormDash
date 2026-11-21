@@ -14,12 +14,15 @@ Open **`/operations`** for the new Thai-language workspace for a small property.
 
 Managers can change property/room settings and create accounts. Staff can manage reservations and work orders and can access guest contact details for front-desk work. Operations accounts use a separate session from the original demo's admin accounts.
 
+Managers can deactivate staff accounts under **ตั้งค่า → ทีมงาน**. A disabled account cannot sign in or use an existing session. Its unfinished work remains in the queue without an assignee, while completed work retains its assignment.
+
 ### First-version rules
 
 - One property per account, with two roles: manager and front-desk staff.
 - Reservations assign one specific room and use local calendar dates with an exclusive departure date. Departing and arriving guests may therefore share the same booking boundary date.
 - A room must be clean, operational, and unoccupied before check-in; unfinished work that blocks the room also prevents check-in.
 - Check-out creates a housekeeping task and makes the room dirty. Completing the necessary housekeeping work makes it ready for the next guest.
+- Today's departure queue includes guests who are still checked in after their scheduled departure date, using the property's local date.
 - Reservation changes and state transitions are checked on the server, including concurrent attempts to reserve a room.
 - Online booking, external booking channels, payments, invoicing, monthly leases, and multi-property switching are outside this release.
 
